@@ -301,6 +301,37 @@ function recommendedRoles(skills) {
   }).sort((a, b) => b.match - a.match);
 }
 
+// ── Local rule-based assessment (no external API call) ─────────────────────
+function generateLocalAssessment(sections, skills, atsScore, missingSkills, jobDesc) {
+  const strengths = [];
+  const quickWins = [];
+
+  if (sections.skills?.length) strengths.push("Skills section is clearly present and parseable");
+  if (sections.experience?.length) strengths.push("Includes work/internship experience");
+  if (sections.projects?.length) strengths.push("Lists projects, which strengthens a technical resume");
+  if (sections.certifications?.length) strengths.push("Certifications add credibility to the profile");
+  if (skills.technical.length >= 8) strengths.push(`Strong technical breadth (${skills.technical.length} skills detected)`);
+  if (sections.contact?.email) strengths.push("Contact info is present and machine-readable");
+  if (strengths.length === 0) strengths.push("Resume text was successfully parsed for analysis");
+
+  if (!sections.summary) quickWins.push("Add a 2-3 line career objective/summary at the top");
+  if (!sections.projects?.length) quickWins.push("Add a Projects section — recruiters and ATS systems weight this heavily");
+  if (!sections.certifications?.length) quickWins.push("Consider adding relevant certifications (even free ones like NPTEL/Coursera)");
+  if (missingSkills.length > 0) quickWins.push(`Add these JD-relevant skills if you have them: ${missingSkills.slice(0, 5).join(", ")}`);
+  if (atsScore.breakdown.length < 15) quickWins.push("Resume may be too short or too long — aim for one focused page");
+  if (!sections.contact?.email) quickWins.push("Make sure your email is clearly visible near the top");
+  if (quickWins.length === 0) quickWins.push("Resume structure looks solid — focus on tailoring keywords per job application");
+
+  const scoreWord = atsScore.total >= 75 ? "strong" : atsScore.total >= 50 ? "decent" : atsScore.total >= 30 ? "weak" : "very weak";
+  const summary = `This resume scores ${atsScore.total}/100 on ATS readiness, which is ${scoreWord}. ` +
+    `${sections.skills?.length ? "Skills and " : ""}${sections.experience?.length ? "experience are" : "structure is"} identifiable by parsing tools. ` +
+    (jobDesc.trim()
+      ? `Against the target job description, ${missingSkills.length} key skill(s) are missing from the resume.`
+      : "Add a job description to get a tailored skill-gap comparison.");
+
+  return { summary, strengths: strengths.slice(0, 4), quickWins: quickWins.slice(0, 4) };
+}
+
 const MOCK_USERS = [{ id: 1, email: "demo@example.com", password: "demo123", name: "Alex Johnson", role: "user" }, { id: 2, email: "admin@resumeai.com", password: "admin123", name: "Admin", role: "admin" }];
 let ANALYSIS_HISTORY = [];
 let nextId = 1;
@@ -433,7 +464,6 @@ export default function App() {
       const sections = extractTextFromContent(resumeText);
       const skills = identifySkills(resumeText);
       let jdSkills = [], jdKeywords = [], matchedSkills = [], missingSkills = [];
-      let aiRec = [], aiSummary = "";
 
       if (jobDesc.trim()) {
         const jdExtracted = identifySkills(jobDesc);
@@ -458,33 +488,7 @@ export default function App() {
       const atsScore = calculateATSScore(sections, skills, jdSkills, resumeText);
       const roles = recommendedRoles(skills);
 
-      const prompt = `You are an expert resume analyzer and ATS specialist. Analyze this resume and give a focused, honest assessment.
-
-Resume Text:
-${resumeText.substring(0, 2000)}
-
-${jobDesc ? `Target Job Description:\n${jobDesc.substring(0, 1000)}` : ""}
-
-Skills Found: ${[...skills.technical, ...skills.soft].join(", ") || "none clearly detected"}
-Missing Skills (from JD): ${missingSkills.join(", ") || "n/a"}
-ATS Score: ${atsScore.total}/100
-
-Provide a JSON response with this exact structure (no markdown, no preamble):
-{
-  "summary": "2-3 sentence overall assessment of resume quality and ATS readiness",
-  "strengths": ["strength1", "strength2", "strength3"],
-  "quickWins": ["specific, actionable improvement 1", "specific actionable improvement 2", "specific actionable improvement 3"]
-}`;
-
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 700, messages: [{ role: "user", content: prompt }] })
-      });
-      const data = await resp.json();
-      const rawText = data.content?.map(c => c.text || "").join("") || "{}";
-      let aiData = {};
-      try { aiData = JSON.parse(rawText.replace(/```json|```/g, "").trim()); } catch { aiData = { summary: rawText.substring(0, 200), strengths: [], quickWins: [] }; }
+      const aiData = generateLocalAssessment(sections, skills, atsScore, missingSkills, jobDesc);
 
       const result = { sections, skills, jdSkills, matchedSkills, missingSkills, atsScore, roles, aiData, resumeText, jobDesc, timestamp: new Date().toISOString(), id: nextId++ };
       setAnalysis(result);
